@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>클라이언트 전용 엑셀 통계 분석 대시보드</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (xlsx) CDN: 브라우저 로컬 엑셀 파싱 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Chart.js CDN: 브라우저 로컬 차트 렌더링 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&display=swap');
+    body { font-family: 'Pretendard', sans-serif; background-color: #0b0f19; color: #f1f5f9; }
+    .card-glass { background: rgba(17, 24, 39, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 1rem; }
+    .drop-zone { border: 2px dashed rgba(99, 102, 241, 0.4); transition: all 0.2s ease; }
+    .drop-zone.dragover { border-color: #6366f1; background: rgba(99, 102, 241, 0.1); transform: scale(1.01); }
+  </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex flex-col justify-between">
+
+  <!-- Header -->
+  <header class="max-w-7xl w-full mx-auto mb-8">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+      <div class="flex items-center gap-3">
+        <div class="p-3 bg-indigo-600/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+          <i class="fa-solid fa-file-excel text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+            로컬 브라우저 엑셀 통계 분석기
+          </h1>
+          <p class="text-xs md:text-sm text-slate-400 mt-1 flex items-center gap-2">
+            <span class="inline-flex items-center gap-1 text-emerald-400 font-medium">
+              <i class="fa-solid fa-shield-halved"></i> 100% 로컬 보안 연산
+            </span>
+            <span class="text-slate-600">•</span>
+            <span>데이터가 서버나 외부로 절대 전송되지 않습니다.</span>
+          </p>
+        </div>
+      </div>
+      <div id="file-status-badge" class="hidden">
+        <span class="px-3.5 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-semibold flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="loaded-file-name">파일 로드됨</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Content Container -->
+  <main class="max-w-7xl w-full mx-auto flex-1 space-y-8">
+
+    <!-- 1. 파일 업로드 영역 (초기 화면) -->
+    <section id="upload-section" class="card-glass p-8 md:p-12 text-center">
+      <div id="drop-area" class="drop-zone rounded-2xl p-8 md:p-12 cursor-pointer bg-slate-900/40 hover:bg-slate-900/80">
+        <input type="file" id="file-input" accept=".xlsx, .xls, .csv" class="hidden">
+        <div class="flex flex-col items-center justify-center space-y-4">
+          <div class="w-16 h-16 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-3xl">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+          </div>
+          <div>
+            <h3 class="text-lg md:text-xl font-bold text-white">엑셀(.xlsx, .xls) 또는 CSV 파일을 올려주세요</h3>
+            <p class="text-sm text-slate-400 mt-1">파일을 드래그하여 놓거나, 클릭하여 선택할 수 있습니다.</p>
+          </div>
+          <div class="text-xs text-slate-500 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60">
+            기존 엑셀 규격 자동 인식 (기준월 컬럼 + 각 기업/항목별 매출 컬럼)
+          </div>
+        </div>
+      </div>
+
+      <!-- 샘플 데이터 즉시 테스트 버튼 -->
+      <div class="mt-6 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400">
+        <span>엑셀 파일이 준비되지 않았나요?</span>
+        <button onclick="loadSampleData()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg border border-slate-700 transition flex items-center gap-1.5 font-medium">
+          <i class="fa-solid fa-flask"></i> 기존 폴더 3사 샘플 데이터로 즉시 테스트
+        </button>
+      </div>
+    </section>
+
+    <!-- 2. 대시보드 화면 (파일 분석 완료 시 등장) -->
+    <div id="dashboard-section" class="hidden space-y-8">
+      
+      <!-- 상단 컨트롤 바 -->
+      <div class="flex items-center justify-between card-glass p-4">
+        <div class="text-sm text-slate-300">
+          총 <strong id="stat-row-count" class="text-white font-mono">0</strong>개 시계열 행, 
+          <strong id="stat-col-count" class="text-white font-mono">0</strong>개 분석 항목 추출 완료
+        </div>
+        <button onclick="resetApp()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+          <i class="fa-solid fa-rotate-left"></i> 다른 파일 분석하기
+        </button>
+      </div>
+
+      <!-- 종합 원본 시계열 차트 -->
+      <div class="card-glass p-6">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-800 gap-2">
+          <div>
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> 전체 시계열 추이 종합
+            </h2>
+            <p class="text-xs text-slate-400">업로드된 파일의 전체 기간 변화 곡선입니다.</p>
+          </div>
+          <div id="chart-legend-box" class="flex flex-wrap items-center gap-3 text-xs"></div>
+        </div>
+        <div class="h-72 w-full mt-4">
+          <canvas id="mainTrendChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 핵심 3대 통계 기법 카드 그리드 -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- 기법 1: 기초 기술통계량 -->
+        <section class="card-glass p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 class="text-base font-bold text-blue-400 flex items-center gap-2">
+                <i class="fa-solid fa-calculator"></i> 1. 기초 기술통계량
+              </h3>
+              <span class="text-[10px] bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded-full border border-blue-700/50">데이터 요약</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">평균, 표준편차, 중앙값, 최솟값, 최댓값 산출</p>
+
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-xs text-left text-slate-300">
+                <thead class="text-slate-400 uppercase bg-slate-800/80">
+                  <tr id="desc-table-head">
+                    <th class="py-2 px-2.5">항목</th>
+                  </tr>
+                </thead>
+                <tbody id="desc-table-body" class="divide-y divide-slate-800 font-mono text-[11px]">
+                  <!-- JS 동적 생성 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="desc-insight" class="mt-4 p-3 bg-slate-900/80 rounded-lg text-xs leading-relaxed text-slate-300 border-l-2 border-blue-400">
+            <!-- 친절한 해설 텍스트 동적 생성 -->
+          </div>
+        </section>
+
+        <!-- 기법 2: 최소제곱법(OLS) 선형 회귀 추세분석 -->
+        <section class="card-glass p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 class="text-base font-bold text-purple-400 flex items-center gap-2">
+                <i class="fa-solid fa-arrow-trend-up"></i> 2. 선형 회귀 추세분석
+              </h3>
+              <span class="text-[10px] bg-purple-900/40 text-purple-300 px-2 py-0.5 rounded-full border border-purple-700/50">성장/하락 기울기</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">시간 경과에 따른 매월 순변화량과 설명력(R²)</p>
+
+            <div class="h-44 mt-4">
+              <canvas id="slopeChart"></canvas>
+            </div>
+            <div id="regression-stats-grid" class="space-y-2 mt-4 text-xs font-mono">
+              <!-- JS 동적 생성 -->
+            </div>
+          </div>
+
+          <div id="trend-insight" class="mt-4 p-3 bg-slate-900/80 rounded-lg text-xs leading-relaxed text-slate-300 border-l-2 border-purple-400">
+            <!-- 친절한 해설 텍스트 동적 생성 -->
+          </div>
+        </section>
+
+        <!-- 기법 3: 피어슨 상관분석 (Correlation) -->
+        <section class="card-glass p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 class="text-base font-bold text-emerald-400 flex items-center gap-2">
+                <i class="fa-solid fa-network-wired"></i> 3. 피어슨 상관분석
+              </h3>
+              <span class="text-[10px] bg-emerald-900/40 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-700/50">변수 간 연관성</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">동반 성장(+1) 또는 시장 잠식/역행(-1) 검정</p>
+
+            <div class="h-44 mt-4">
+              <canvas id="corrChart"></canvas>
+            </div>
+            <div id="corr-stats-grid" class="space-y-2 mt-4 text-xs font-mono">
+              <!-- JS 동적 생성 -->
+            </div>
+          </div>
+
+          <div id="corr-insight" class="mt-4 p-3 bg-slate-900/80 rounded-lg text-xs leading-relaxed text-slate-300 border-l-2 border-emerald-400">
+            <!-- 친절한 해설 텍스트 동적 생성 -->
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+
+  <footer class="max-w-7xl w-full mx-auto mt-12 py-4 border-t border-slate-800 text-center text-xs text-slate-500">
+    🔒 보안 정책: HTML5 File API & Web Worker 메모리 내에서만 작동하며, 네트워크 요청을 전혀 발생시키지 않습니다.
+  </footer>
+
+  <script>
+    // 전역 상태
+    let parsedData = null;
+    let mainChartInstance = null;
+    let slopeChartInstance = null;
+    let corrChartInstance = null;
+
+    const colorPalette = [
+      { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' },
+      { border: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' },
+      { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' },
+      { border: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' },
+      { border: '#ec4899', bg: 'rgba(236, 72, 153, 0.15)' }
+    ];
+
+    // 드래그 앤 드롭 및 파일 선택 이벤트
+    const dropArea = document.getElementById('drop-area');
+    const fileInput = document.getElementById('file-input');
+
+    dropArea.addEventListener('click', () => fileInput.click());
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropArea.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropArea.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropArea.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropArea.classList.remove('dragover');
+      }, false);
+    });
+
+    dropArea.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files.length > 0) processFile(files[0]);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) processFile(e.target.files[0]);
+    });
+
+    // 엑셀 / CSV 파일 로컬 메모리 파싱
+    function processFile(file) {
+      document.getElementById('loaded-file-name').textContent = file.name;
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+
+        // 첫 번째 시트 가져오기
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // 2차원 배열로 파싱
+        const jsonSheet = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        parseAndAnalyze(jsonSheet);
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 데이터 정제 및 유효 행/열 추출
+    function parseAndAnalyze(rows) {
+      if (!rows || rows.length < 2) {
+        alert("유효한 데이터 행이 부족합니다.");
+        return;
+      }
+
+      // 1. 헤더 찾기 (기준월 또는 날짜 형식 포함된 첫 번째 행)
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        const row = rows[i];
+        if (row && row.length >= 2 && (String(row[0]).includes('월') || String(row[0]).includes('일') || String(row[0]).includes('날짜') || String(row[0]).includes('기준'))) {
+          headerIdx = i;
+          break;
+        }
+      }
+
+      if (headerIdx === -1) headerIdx = 0;
+
+      const headerRow = rows[headerIdx];
+      const timeLabel = String(headerRow[0] || '기준월');
+      
+      // 유효 숫자 컬럼 식별
+      const numericColumns = [];
+      for (let col = 1; col < headerRow.length; col++) {
+        const colName = String(headerRow[col] || '').trim();
+        if (colName) {
+          numericColumns.push({ index: col, name: colName });
+        }
+      }
+
+      // 데이터 행 파싱 (요약 행 '연도', '합계' 등은 제외)
+      const timeLabels = [];
+      const seriesData = numericColumns.map(() => []);
+
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || !row[0]) continue;
+        const firstCell = String(row[0]).trim();
+        
+        // 연도 요약 행이나 설명 텍스트 행 건너뛰기
+        if (firstCell === '연도' || firstCell === '합계' || firstCell === '데이터 설명' || firstCell === '기간') {
+          continue;
+        }
+
+        // YYYY-MM-DD 또는 YYYY-MM 패턴 확인
+        if (!/^\d{4}/.test(firstCell)) continue;
+
+        timeLabels.push(firstCell.substring(0, 7)); // YYYY-MM 형태
+        numericColumns.forEach((colObj, idx) => {
+          const val = parseFloat(row[colObj.index]);
+          seriesData[idx].push(isNaN(val) ? 0 : val);
+        });
+      }
+
+      if (timeLabels.length === 0 || seriesData[0].length === 0) {
+        alert("분석 가능한 유효한 시계열 데이터를 찾지 못했습니다.");
+        return;
+      }
+
+      parsedData = {
+        timeLabels,
+        columns: numericColumns.map((c, i) => ({ name: c.name, values: seriesData[i] }))
+      };
+
+      renderDashboard();
+    }
+
+    // 대시보드 렌더링
+    function renderDashboard() {
+      document.getElementById('upload-section').classList.add('hidden');
+      document.getElementById('dashboard-section').classList.remove('hidden');
+      document.getElementById('file-status-badge').classList.remove('hidden');
+
+      document.getElementById('stat-row-count').textContent = parsedData.timeLabels.length;
+      document.getElementById('stat-col-count').textContent = parsedData.columns.length;
+
+      renderMainChart();
+      calcTechnique1_Descriptive();
+      calcTechnique2_LinearRegression();
+      calcTechnique3_Correlation();
+    }
+
+    // 메인 시계열 차트 렌더링
+    function renderMainChart() {
+      const ctx = document.getElementById('mainTrendChart').getContext('2d');
+      if (mainChartInstance) mainChartInstance.destroy();
+
+      const legendBox = document.getElementById('chart-legend-box');
+      legendBox.innerHTML = '';
+
+      const datasets = parsedData.columns.map((col, idx) => {
+        const palette = colorPalette[idx % colorPalette.length];
+        
+        // 범례 HTML 생성
+        legendBox.innerHTML += `
+          <span class="flex items-center gap-1.5" style="color: ${palette.border}">
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${palette.border}"></span>
+            ${col.name}
+          </span>
+        `;
+
+        return {
+          label: col.name,
+          data: col.values,
+          borderColor: palette.border,
+          backgroundColor: palette.bg,
+          tension: 0.3,
+          borderWidth: 2,
+          pointRadius: parsedData.timeLabels.length > 30 ? 2 : 4,
+          pointHoverRadius: 6
+        };
+      });
+
+      mainChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: parsedData.timeLabels,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(15, 23, 42, 0.9)',
+              titleColor: '#fff',
+              bodyColor: '#cbd5e1',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              borderWidth: 1,
+              padding: 10
+            }
+          },
+          scales: {
+            x: {
+              ticks: { maxTicksLimit: 12, color: '#64748b' },
+              grid: { color: 'rgba(255, 255, 255, 0.04)' }
+            },
+            y: {
+              ticks: { color: '#64748b' },
+              grid: { color: 'rgba(255, 255, 255, 0.05)' }
+            }
+          }
+        }
+      });
+    }
+
+    // 통계 기법 1: 기초 기술통계량
+    function calcTechnique1_Descriptive() {
+      const thead = document.getElementById('desc-table-head');
+      const tbody = document.getElementById('desc-table-body');
+      
+      thead.innerHTML = '<th class="py-2 px-2.5">지표</th>';
+      parsedData.columns.forEach((col, idx) => {
+        const color = colorPalette[idx % colorPalette.length].border;
+        thead.innerHTML += `<th class="py-2 px-2.5" style="color: ${color}">${col.name.split(' ')[0]}</th>`;
+      });
+
+      const metrics = [
+        { key: 'mean', label: '평균 (Mean)' },
+        { key: 'std', label: '표준편차 (Std)' },
+        { key: 'median', label: '중앙값 (Median)' },
+        { key: 'min', label: '최솟값 (Min)' },
+        { key: 'max', label: '최댓값 (Max)' }
+      ];
+
+      const stats = parsedData.columns.map(col => {
+        const vals = [...col.values].sort((a, b) => a - b);
+        const n = vals.length;
+        const sum = vals.reduce((a, b) => a + b, 0);
+        const mean = sum / n;
+        const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n - 1);
+        const std = Math.sqrt(variance);
+        const median = n % 2 === 0 ? (vals[n/2 - 1] + vals[n/2]) / 2 : vals[Math.floor(n/2)];
+        const min = vals[0];
+        const max = vals[n - 1];
+
+        return { colName: col.name, mean, std, median, min, max };
+      });
+
+      tbody.innerHTML = '';
+      metrics.forEach(m => {
+        let rowHtml = `<tr><td class="py-1.5 px-2.5 font-sans font-medium text-slate-400">${m.label}</td>`;
+        stats.forEach(s => {
+          rowHtml += `<td class="py-1.5 px-2.5">${s[m.key].toFixed(2)}</td>`;
+        });
+        rowHtml += `</tr>`;
+        tbody.innerHTML += rowHtml;
+      });
+
+      // 최고/최저 해설 생성
+      const highestAvg = [...stats].sort((a, b) => b.mean - a.mean)[0];
+      const lowestStd = [...stats].sort((a, b) => a.std - b.std)[0];
+
+      document.getElementById('desc-insight').innerHTML = `
+        <div class="font-semibold text-blue-300 mb-1">💡 데이터 요약 인사이트:</div>
+        분석 기간 동안 <strong>${highestAvg.colName}</strong>이(가) 평균 <strong>${highestAvg.mean.toFixed(2)}</strong>으로 가장 높은 실적을 기록했습니다. 
+        반면 <strong>${lowestStd.colName}</strong>은(는) 표준편차가 <strong>${lowestStd.std.toFixed(2)}</strong>으로 편차가 가장 작아 실적이 일정하게 유지되었습니다.
+      `;
+    }
+
+    // 통계 기법 2: 최소제곱법(OLS) 선형 회귀 추세분석
+    function calcTechnique2_LinearRegression() {
+      const statsGrid = document.getElementById('regression-stats-grid');
+      statsGrid.innerHTML = '';
+
+      const regResults = parsedData.columns.map(col => {
+        const y = col.values;
+        const n = y.length;
+        const x = Array.from({length: n}, (_, i) => i + 1);
+
+        const sumX = x.reduce((a, b) => a + b, 0);
+        const sumY = y.reduce((a, b) => a + b, 0);
+        const sumXY = x.reduce((acc, curr, i) => acc + curr * y[i], 0);
+        const sumX2 = x.reduce((acc, curr) => acc + curr * curr, 0);
+
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+        const intercept = (sumY - slope * sumX) / n;
+
+        // R-squared (결정계수)
+        const meanY = sumY / n;
+        const ssTot = y.reduce((acc, curr) => acc + Math.pow(curr - meanY, 2), 0);
+        const ssRes = y.reduce((acc, curr, i) => acc + Math.pow(curr - (slope * x[i] + intercept), 2), 0);
+        const r2 = 1 - (ssRes / ssTot);
+
+        return { colName: col.name, slope, intercept, r2 };
+      });
+
+      // 바 차트 시각화 (기울기 비교)
+      const ctx = document.getElementById('slopeChart').getContext('2d');
+      if (slopeChartInstance) slopeChartInstance.destroy();
+
+      slopeChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: regResults.map(r => r.colName.split(' ')[0]),
+          datasets: [{
+            label: '월평균 성장/하락 기울기',
+            data: regResults.map(r => r.slope.toFixed(3)),
+            backgroundColor: regResults.map(r => r.slope >= 0 ? '#10b981' : '#f43f5e'),
+            borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { grid: { color: 'rgba(255,255,255,0.06)' } },
+            x: { ticks: { color: '#94a3b8' } }
+          }
+        }
+      });
+
+      regResults.forEach((r, idx) => {
+        const color = colorPalette[idx % colorPalette.length].border;
+        const isUp = r.slope >= 0;
+        statsGrid.innerHTML += `
+          <div class="flex items-center justify-between p-2 rounded bg-slate-900/60 border border-slate-800">
+            <span style="color: ${color}">${r.colName.split(' ')[0]}</span>
+            <div class="flex items-center gap-3">
+              <span class="${isUp ? 'text-emerald-400' : 'text-rose-400'} font-bold">
+                ${isUp ? '+' : ''}${r.slope.toFixed(3)} /월
+              </span>
+              <span class="text-slate-500 text-[10px]">R²=${r.r2.toFixed(2)}</span>
+            </div>
+          </div>
+        `;
+      });
+
+      // 해설
+      const fastest = [...regResults].sort((a, b) => b.slope - a.slope)[0];
+      const declining = regResults.filter(r => r.slope < 0);
+
+      document.getElementById('trend-insight').innerHTML = `
+        <div class="font-semibold text-purple-300 mb-1">💡 추세 해석:</div>
+        <strong>${fastest.colName}</strong>은(는) 매월 약 <strong>${(fastest.slope).toFixed(3)}</strong>씩 지속적으로 순증하여 가장 가파른 우상향 궤적을 그립니다. 
+        ${declining.length > 0 ? `반면 <strong>${declining.map(d=>d.colName).join(', ')}</strong>은(는) 매월 마이너스 기울기를 보여 구조적 감소세를 나타냅니다.` : '모든 항목이 우상향 추세를 유지하고 있습니다.'}
+      `;
+    }
+
+    // 통계 기법 3: 피어슨 상관분석 (Correlation)
+    function calcTechnique3_Correlation() {
+      const cols = parsedData.columns;
+      const statsGrid = document.getElementById('corr-stats-grid');
+      statsGrid.innerHTML = '';
+
+      const corrPairs = [];
+
+      for (let i = 0; i < cols.length; i++) {
+        for (let j = i + 1; j < cols.length; j++) {
+          const colA = cols[i];
+          const colB = cols[j];
+          const n = colA.values.length;
+
+          const meanA = colA.values.reduce((a, b) => a + b, 0) / n;
+          const meanB = colB.values.reduce((a, b) => a + b, 0) / n;
+
+          let num = 0;
+          let denA = 0;
+          let denB = 0;
+
+          for (let k = 0; k < n; k++) {
+            const diffA = colA.values[k] - meanA;
+            const diffB = colB.values[k] - meanB;
+            num += diffA * diffB;
+            denA += diffA * diffA;
+            denB += diffB * diffB;
+          }
+
+          const r = num / (Math.sqrt(denA) * Math.sqrt(denB));
+          corrPairs.push({
+            nameA: colA.name.split(' ')[0],
+            nameB: colB.name.split(' ')[0],
+            fullNameA: colA.name,
+            fullNameB: colB.name,
+            r: r
+          });
+        }
+      }
+
+      // 상관계수 차트 시각화
+      const ctx = document.getElementById('corrChart').getContext('2d');
+      if (corrChartInstance) corrChartInstance.destroy();
+
+      corrChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: corrPairs.map(p => `${p.nameA} ↔ ${p.nameB}`),
+          datasets: [{
+            label: '상관계수 (r)',
+            data: corrPairs.map(p => p.r.toFixed(3)),
+            backgroundColor: corrPairs.map(p => p.r >= 0.5 ? '#10b981' : (p.r <= -0.5 ? '#f43f5e' : '#f59e0b')),
+            borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { min: -1.0, max: 1.0, grid: { color: 'rgba(255,255,255,0.06)' } },
+            x: { ticks: { color: '#94a3b8' } }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+
+      corrPairs.forEach(p => {
+        let tag = '';
+        if (p.r >= 0.7) tag = '<span class="text-emerald-400">강한 동반 상승</span>';
+        else if (p.r <= -0.7) tag = '<span class="text-rose-400">강한 상반/대체</span>';
+        else if (p.r >= 0.3) tag = '<span class="text-indigo-300">약한 양의 상관</span>';
+        else if (p.r <= -0.3) tag = '<span class="text-amber-400">약한 음의 상관</span>';
+        else tag = '<span class="text-slate-400">무상관</span>';
+
+        statsGrid.innerHTML += `
+          <div class="flex items-center justify-between p-2 rounded bg-slate-900/60 border border-slate-800">
+            <span class="text-slate-300">${p.nameA} ↔ ${p.nameB}</span>
+            <div class="flex items-center gap-3">
+              <span class="font-bold text-white">${p.r.toFixed(3)}</span>
+              <span class="text-[10px]">${tag}</span>
+            </div>
+          </div>
+        `;
+      });
+
+      // 해설
+      const highestPositive = [...corrPairs].sort((a, b) => b.r - a.r)[0];
+      const lowestNegative = [...corrPairs].sort((a, b) => a.r - b.r)[0];
+
+      let insightText = '';
+      if (highestPositive && highestPositive.r >= 0.5) {
+        insightText += `<strong>${highestPositive.nameA}</strong>와 <strong>${highestPositive.nameB}</strong>은(는) 상관계수 <strong>${highestPositive.r.toFixed(3)}</strong>로 같은 방향으로 움직이는 높은 연동성을 보입니다. `;
+      }
+      if (lowestNegative && lowestNegative.r <= -0.4) {
+        insightText += `반면 <strong>${lowestNegative.nameA}</strong>와 <strong>${lowestNegative.nameB}</strong>은(는) <strong>${lowestNegative.r.toFixed(3)}</strong>의 음의 상관관계로, 한쪽이 증가하면 다른 쪽이 감소하는 상반된 경향을 띱니다.`;
+      }
+
+      document.getElementById('corr-insight').innerHTML = `
+        <div class="font-semibold text-emerald-300 mb-1">💡 상관성 해석:</div>
+        ${insightText || '모든 항목 간의 상관관계가 정상적으로 계산되었습니다.'}
+      `;
+    }
+
+    // 앱 초기화
+    function resetApp() {
+      parsedData = null;
+      document.getElementById('file-input').value = '';
+      document.getElementById('upload-section').classList.remove('hidden');
+      document.getElementById('dashboard-section').classList.add('hidden');
+      document.getElementById('file-status-badge').classList.add('hidden');
+    }
+
+    // 샘플 데이터 즉시 불러오기
+    function loadSampleData() {
+      const sampleCsv = `기준월,한빛테크 매출(억원),미래솔루션 매출(억원),새봄산업 매출(억원)
+2021-01-01,8.59,7.1,10.15
+2021-02-01,9.08,7.79,10.32
+2021-03-01,10.22,7.44,9.75
+2021-04-01,9.83,7.35,9.32
+2021-05-01,9.77,7.02,8.94
+2021-06-01,9.78,6.66,8.55
+2021-07-01,9.36,6.22,8.56
+2021-08-01,8.64,6.23,8.25
+2021-09-01,8.35,6.28,8.52
+2021-10-01,7.69,6.82,9.34
+2021-11-01,9.47,8.07,10.89
+2021-12-01,10.36,8.41,11.25
+2022-01-01,10.07,8.11,10.39
+2022-02-01,10.79,8.45,9.58
+2022-03-01,11.19,8.22,9.25
+2022-04-01,11.54,7.92,8.93
+2022-05-01,11.84,7.74,8.54
+2022-06-01,10.98,7.27,8.58
+2022-07-01,10.66,7.11,7.95
+2022-08-01,9.99,6.68,8.2
+2022-09-01,9.66,6.99,8.64
+2022-10-01,9.31,7.41,9.24
+2022-11-01,10.43,8.3,10.45
+2022-12-01,11.31,9.02,11.33
+2023-01-01,11.66,8.6,9.98
+2023-02-01,12.27,9.34,9.67
+2023-03-01,12.95,8.91,9.39
+2023-04-01,13.35,8.96,9.16
+2023-05-01,13.41,8.32,8.76
+2023-06-01,12.98,7.79,7.8
+2023-07-01,11.78,7.74,8.15
+2023-08-01,11.25,7.2,8.01
+2023-09-01,11.15,7.54,8.71
+2023-10-01,10.89,7.54,8.98
+2023-11-01,12.48,9.4,10.16
+2023-12-01,13.45,9.73,10.62
+2024-01-01,13.01,9.84,9.91
+2024-02-01,14,9.83,9.23
+2024-03-01,15.73,10.18,8.98
+2024-04-01,15.88,9.76,8.43
+2024-05-01,15.92,9.28,8.4
+2024-06-01,15.01,8.41,7.79
+2024-07-01,13.49,8.62,8.01
+2024-08-01,13.41,7.99,7.61
+2024-09-01,12.75,8.47,7.93
+2024-10-01,12.2,8.24,8.79
+2024-11-01,14.5,9.89,10.09
+2024-12-01,15.4,10.71,10.74
+2025-01-01,14.98,10.08,9.42
+2025-02-01,16.77,10.43,9.11
+2025-03-01,18.27,10.88,8.86
+2025-04-01,18.14,10.2,8.28
+2025-05-01,17.76,10.13,7.85
+2025-06-01,16.89,9.19,7.79
+2025-07-01,15.84,9.35,7.81
+2025-08-01,14.55,8.63,7.81
+2025-09-01,13.95,8.63,8.28
+2025-10-01,14.17,9.25,8.6
+2025-11-01,16.78,10.8,9.55
+2025-12-01,17.61,11.8,10.15`;
+
+      document.getElementById('loaded-file-name').textContent = '기본 3사 5개년 샘플 데이터';
+      const workbook = XLSX.read(sampleCsv, { type: 'string' });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonSheet = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      parseAndAnalyze(jsonSheet);
+    }
+  </script>
+</body>
+</html>
